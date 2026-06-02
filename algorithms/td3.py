@@ -31,9 +31,6 @@ POLICY_NOISE = 0.2    # std of target-smoothing noise
 NOISE_CLIP = 0.5      # how far that noise can reach          
 POLICY_DELAY = 2      # actor updated every N critic updates
 
-# ----------------------------------------------------------------------------
-# Networks
-# ----------------------------------------------------------------------------
 class Actor(nn.Module):
     """Deterministic policy: state -> action, tanh-squashed and scaled to the
     environment's action bounds (assumed symmetric, as in Pendulum/MuJoCo)."""
@@ -61,16 +58,18 @@ class Critic(nn.Module):
         return self.q1(x), self.q2(x)
 
 
-# ----------------------------------------------------------------------------
-# Agent
-# ----------------------------------------------------------------------------
 class TD3:
-    def __init__(self, obs_dim, action_dim, max_action):
+    def __init__(self, obs_dim, action_dim, max_action,
+                 use_target_actor=True, use_target_critic=True):
         self.max_action = max_action
+        # ablation switches (both True == normal TD3)
+        self.use_target_actor = use_target_actor
+        self.use_target_critic = use_target_critic
 
         self.actor = Actor(obs_dim, action_dim, max_action)
         self.critic = Critic(obs_dim, action_dim)
-        # Target nets start as exact copies. deepcopy is all this needs.
+
+        # target nets start as copies
         self.actor_target = copy.deepcopy(self.actor)
         self.critic_target = copy.deepcopy(self.critic)
 
@@ -78,9 +77,11 @@ class TD3:
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=LR)
 
         self.total_it = 0  # counts critic updates, drives the delayed actor step
+        self.q_value = 0.0  # most recent mean critic estimate (for logging)
 
     @torch.no_grad()
     def act(self, obs, noise=0.0):
+        """ function agent uses to take an action given an obs with some noise added + clipping """
         obs = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
         action = self.actor(obs).numpy().flatten()
         if noise:  # exploration noise during data collection
@@ -88,20 +89,23 @@ class TD3:
         return action.clip(-self.max_action, self.max_action)
 
     def update(self, buffer):
+        """ given the replay buffer, we sample  """
         self.total_it += 1
         obs, action, reward, next_obs, done = buffer.sample(BATCH_SIZE)
 
+        # Ablation: which nets build the target. Default = the slow target copies.
+        actor_net = self.actor_target if self.use_target_actor else self.actor
+        critic_net = self.critic_target if self.use_target_critic else self.critic
+
         # --- Critic update -------------------------------------------------
         with torch.no_grad():
-            # TRICK 3: target policy smoothing. Perturb the target action with
-            # clipped Gaussian noise so the critic can't latch onto a Q spike.
+            # trick 3: gaussian smoothing of action
             noise = (torch.randn_like(action) * POLICY_NOISE).clamp(-NOISE_CLIP, NOISE_CLIP)
-            next_action = (self.actor_target(next_obs) + noise).clamp(
+            next_action = (actor_net(next_obs) + noise).clamp(
                 -self.max_action, self.max_action)
 
-            # TRICK 1: clipped double-Q. Take the smaller of the two target
-            # critics — this is the whole anti-overestimation mechanism.
-            target_q1, target_q2 = self.critic_target(next_obs, next_action)
+            # trick 1: take min of the 2 critics
+            target_q1, target_q2 = critic_net(next_obs, next_action)
             target_q = torch.min(target_q1, target_q2)
             # Bellman target. (1 - done) zeroes the bootstrap at episode end.
             target_q = reward + GAMMA * (1 - done) * target_q
@@ -109,6 +113,7 @@ class TD3:
         # Regress BOTH critics toward the same target.
         current_q1, current_q2 = self.critic(obs, action)
         critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+        self.q_value = current_q1.mean().item()  # log the critic's own estimate
 
         self.critic_opt.zero_grad()
         critic_loss.backward()
@@ -156,7 +161,8 @@ def evaluate(agent, env_id, episodes=5):
 
 
 def train(env_id="Pendulum-v1", total_steps=30_000, start_steps=1_000,
-          eval_every=2_000, expl_noise=0.1, seed=0):
+          eval_every=2_000, expl_noise=0.1, seed=0,
+          use_target_actor=True, use_target_critic=True, label=None):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -165,9 +171,12 @@ def train(env_id="Pendulum-v1", total_steps=30_000, start_steps=1_000,
     action_dim = env.action_space.shape[0]
     max_action = float(env.action_space.high[0])
 
-    agent = TD3(obs_dim, action_dim, max_action)
+    agent = TD3(obs_dim, action_dim, max_action,
+                use_target_actor=use_target_actor, use_target_critic=use_target_critic)
     buffer = ReplayBuffer(obs_dim, action_dim)
-    logger = Logger(f"TD3-{env_id}")
+    logger = Logger(label or f"TD3-{env_id}")
+    # data series returned for plotting/comparison
+    hist = {"steps": [], "returns": [], "q_values": []}
 
     obs, _ = env.reset(seed=seed)
     for step in range(1, total_steps + 1):
@@ -191,12 +200,19 @@ def train(env_id="Pendulum-v1", total_steps=30_000, start_steps=1_000,
             agent.update(buffer)
 
         if step % eval_every == 0:
-            logger.log(step, evaluate(agent, env_id))
+            ret = evaluate(agent, env_id)
+            logger.log(step, ret)
+            hist["steps"].append(step)
+            hist["returns"].append(ret)
+            hist["q_values"].append(agent.q_value)
 
     env.close()
-    logger.plot(f"algorithms/td3_{env_id}.png")
-    return agent
+    hist["agent"] = agent
+    return hist
 
 
 if __name__ == "__main__":
-    train()
+    hist = train()
+    logger = Logger("TD3-Pendulum-v1")
+    logger.steps, logger.values = hist["steps"], hist["returns"]
+    logger.plot("algorithms/td3_Pendulum-v1.png")
