@@ -3,7 +3,7 @@
 SAC trains a stochastic policy as well was 2 clipped Q functions 
 - key idea: entropy regularization term in critic loss so model trades off between expected return and randomness in policy
 - this obviously connects back to the whole exploration-exploitation debate; higher entropy means more exploration, higher return means exploitation
-- 
+- soft updates to the target networks for critics (polyak averaging)
 
 Run:  python -m algorithms.sac
 """
@@ -22,7 +22,6 @@ from common.logger import Logger
 
 # hyperparams
 GAMMA = 0.99          # discount
-ALPHA = 0.5           # coefficient for entropy regularization
 TAU = 0.005           # target-network Polyak averaging rate
 LR = 3e-4             # learning rate (both actor and critic)
 HIDDEN = 256          # hidden units per layer
@@ -75,6 +74,11 @@ class SAC:
 
         self.q_value = 0.0  # most recent mean critic estimate (for logging)
 
+        # learnable temperature: auto-tunes the entropy coefficient
+        self.target_entropy = -action_dim
+        self.log_alpha = torch.zeros(1, requires_grad=True)
+        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=LR)
+
     def reparamaterize(self, mean, std):
         eps = torch.randn_like(std)
         action = mean + std * eps
@@ -106,7 +110,7 @@ class SAC:
             target_q1, target_q2 = self.critic_target(next_obs, next_action)
             target_q = torch.min(target_q1, target_q2)
             # Bellman target. (1 - done) zeroes the bootstrap at episode end.
-            target_q = reward + GAMMA * (1 - done) * (target_q - ALPHA * next_logp)
+            target_q = reward + GAMMA * (1 - done) * (target_q - self.log_alpha.exp() * next_logp)
 
         # Regress BOTH critics toward the same target.
         current_q1, current_q2 = self.critic(obs, action)
@@ -118,13 +122,20 @@ class SAC:
         self.critic_opt.step()
 
         action, logp = self.sample(*self.actor(obs))
+        alpha = self.log_alpha.exp()
 
         q1, q2 = self.critic(obs, action)
-        actor_loss = (-torch.min(q1, q2) + ALPHA * logp).mean()
+        actor_loss = (-torch.min(q1, q2) + alpha.detach() * logp).mean()
 
         self.actor_opt.zero_grad()
         actor_loss.backward()
         self.actor_opt.step()
+
+        # push policy entropy toward target_entropy
+        alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
+        self.alpha_opt.zero_grad()
+        alpha_loss.backward()
+        self.alpha_opt.step()
 
         # Soft-update both target networks (Polyak averaging).
         self._soft_update(self.critic, self.critic_target)
