@@ -40,7 +40,7 @@ from common.logger import Logger
 
 # hyperparams
 GAMMA = 0.99
-LR = 1e-2
+LR = 1e-5
 HIDDEN = 128
 
 
