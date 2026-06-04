@@ -9,6 +9,22 @@ led to low return.
 ON-POLICY: collect a fresh episode with the current policy, do ONE update, then
 discard it. No replay buffer.
 
+loss: 
+    -mean_t(log pi(a_t|s_t) * G_t)
+        log pi(a_t|s_t): how probable was the action that we took under the current policy
+        G_t: a measure of how good that action turned out to actually be
+
+    this loss function is pretty simple to interpret, expected return across all time steps in episode
+    minimizing the loss is equivalent to increasing probability of good actions (get higher reward) and minimizing probability of bad actions (that get lower reward)
+    we are doing MLE (maximizing return-weighted log-likelihood of actions we chose)
+
+gradient: 
+    the gradient of the log prob indicates the direction we should move our parameters to lead to largest change in probability of selecting the action we did
+    we weight that gradient by the return G_t; so for good actions, there's a positive weight and we want params to move heavily in that direction
+    alternatively, for bad actions there's a negative G_t and we don't really want to push params in that direction
+
+    policy ends up changing params in a way that increases prob of good actions and decreases prob of bad ones
+
 Run:  python -m algorithms.reinforce
 """
 
