@@ -69,7 +69,7 @@ class REINFORCE:
         
         G_t = (G_t - G_t.mean()) / (G_t.std() + 1e-8)  # need standardization so that ~half of the actions have negative returns 
 
-        loss = -torch.mean(torch.stack(log_probs) * G_t)  # use mean instead of sum so that gradient magnitude is comparable between small/large number of steps
+        loss = -torch.mean(torch.stack(log_probs) * G_t)  # use mean instead of sum so that gradient magnitude is comparable between small/large number of steps in episode we are using
 
         self.policy_opt.zero_grad()
         loss.backward()
