@@ -107,7 +107,7 @@ class GAE:
         # when we do actor_loss.backward(), it will adjust the critic params but we don't want that
         # that's considered a "leak", critic will get changed by the wrong objective
 
-        target = (A_t + torch.stack(values))  
+        target = (A_t + torch.stack(values)).detach() 
         critic_loss = torch.mean((torch.stack(values) - target).pow(2))
         actor_loss = -torch.mean(torch.stack(log_probs) * A_t.detach())
 
