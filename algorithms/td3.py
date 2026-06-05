@@ -93,7 +93,7 @@ class TD3:
         self.total_it += 1
         obs, action, reward, next_obs, done = buffer.sample(BATCH_SIZE)
 
-        # Ablation: which nets build the target. Default = the slow target copies.
+        # ablation experiment: which nets build the target. Default = the slow target copies
         actor_net = self.actor_target if self.use_target_actor else self.actor
         critic_net = self.critic_target if self.use_target_critic else self.critic
 
@@ -107,10 +107,10 @@ class TD3:
             # trick 1: take min of the 2 critics
             target_q1, target_q2 = critic_net(next_obs, next_action)
             target_q = torch.min(target_q1, target_q2)
-            # Bellman target. (1 - done) zeroes the bootstrap at episode end.
+            # bellman target. (1 - done) zeroes the bootstrap at episode end
             target_q = reward + GAMMA * (1 - done) * target_q
 
-        # Regress BOTH critics toward the same target.
+        # Regress BOTH critics toward the same target
         current_q1, current_q2 = self.critic(obs, action)
         critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
         self.q_value = current_q1.mean().item()  # log the critic's own estimate
@@ -122,8 +122,8 @@ class TD3:
         # --- Delayed actor + target update ---------------------------------
         # TRICK 2: only every POLICY_DELAY critic steps.
         if self.total_it % POLICY_DELAY == 0:
-            # Deterministic policy gradient: push actions toward higher Q.
-            # Use just the first critic (the convention).
+            # deterministic policy gradient: push actions toward higher Q
+            # use just the first critic
             q1, _ = self.critic(obs, self.actor(obs))
             actor_loss = -q1.mean()
 
@@ -180,17 +180,16 @@ def train(env_id="Pendulum-v1", total_steps=30_000, start_steps=1_000,
 
     obs, _ = env.reset(seed=seed)
     for step in range(1, total_steps + 1):
-        # Warm up with random actions to seed the buffer, then act on-policy
-        # with exploration noise.
+        # warm up with random actions to seed the buffer, then act on-policy with exploration noise.
         if step < start_steps:
             action = env.action_space.sample()
         else:
             action = agent.act(obs, noise=expl_noise)
 
         next_obs, reward, term, trunc, _ = env.step(action)
-        # Only `term` is a true environment terminal; `trunc` (time limit) must
+        # only `term` is a true environment terminal; `trunc` (time limit) must
         # NOT zero the bootstrap, or we'd teach the agent the world ends at the
-        # time limit. Pendulum never truly terminates, so done is always 0 here.
+        # time limit. pendulum never truly terminates so done is always 0 here.
         buffer.add(obs, action, reward, next_obs, float(term))
         obs = next_obs
         if term or trunc:
