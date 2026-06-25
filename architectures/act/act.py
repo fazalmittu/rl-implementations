@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import torch
 import torch.nn as nn
@@ -172,6 +173,8 @@ def train(
     max_steps_per_epoch: int | None = None,
     total_steps: int | None = None,
     save_path: str | None = None,
+    log_every: int = 10,
+    save_every: int | None = None,
 ):
 
     if model is None:
@@ -198,6 +201,8 @@ def train(
         epochs = (total_steps + steps_per_epoch - 1) // steps_per_epoch
 
     global_step = 0
+    train_start_t = time.perf_counter()
+    last_log_t = train_start_t
 
     for epoch in range(epochs):
 
@@ -227,60 +232,128 @@ def train(
             num_steps += 1
             global_step += 1
 
+            if log_every is not None and (global_step == 1 or global_step % log_every == 0):
+                now = time.perf_counter()
+                dt = now - last_log_t
+                steps_per_s = log_every / dt if global_step != 1 and dt > 0 else 0.0
+                avg_loss = running_loss / num_steps
+                print(
+                    f"Step {global_step}"
+                    f" | epoch {epoch+1}/{epochs}"
+                    f" | loss {loss.item():.4f}"
+                    f" | avg_loss {avg_loss:.4f}"
+                    f" | {steps_per_s:.2f} steps/s",
+                    flush=True,
+                )
+                last_log_t = now
+
+            if save_path is not None and save_every is not None and global_step % save_every == 0:
+                checkpoint_path = Path(save_path)
+                checkpoint_path = checkpoint_path.with_name(
+                    f"{checkpoint_path.stem}_step_{global_step}{checkpoint_path.suffix}"
+                )
+                save_checkpoint(
+                    checkpoint_path,
+                    model,
+                    optimizer,
+                    epochs,
+                    lr,
+                    weight_decay,
+                    grad_clip,
+                    batch_size,
+                    chunk_size,
+                    device,
+                    max_steps_per_epoch,
+                    total_steps,
+                    global_step,
+                )
+                print(f"Saved checkpoint to {checkpoint_path}", flush=True)
+
             if total_steps is not None and global_step >= total_steps:
                 break
 
             if max_steps_per_epoch is not None and step + 1 >= max_steps_per_epoch:
                 break
 
-        print(f"Epoch {epoch+1}/{epochs} - Step {global_step} - Loss: {running_loss / num_steps}")
+        print(f"Epoch {epoch+1}/{epochs} - Step {global_step} - Loss: {running_loss / num_steps}", flush=True)
 
         if total_steps is not None and global_step >= total_steps:
             break
 
     if save_path is not None:
-        save_path = Path(save_path)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-
-        torch.save(
-            {
-                "model_state_dict": to_cpu(model.state_dict()),
-                "optimizer_state_dict": to_cpu(optimizer.state_dict()),
-                "model_config": {
-                    "num_cams": model.num_cams,
-                    "cam_width": model.cam_width,
-                    "cam_height": model.cam_height,
-                    "state_dim": model.state_dim,
-                    "hidden_size": model.hidden_size,
-                    "latent_dim": model.latent_dim,
-                    "chunk_size": model.chunk_size,
-                    "beta": model.beta,
-                    "batch_size": model.batch_size,
-                    "nhead": model.nhead,
-                    "dim_feedforward": model.dim_feedforward,
-                    "dropout": model.dropout,
-                    "obs_encoder_layers": model.obs_encoder_layers,
-                    "vae_encoder_layers": model.vae_encoder_layers,
-                    "vae_decoder_layers": model.vae_decoder_layers,
-                },
-                "train_config": {
-                    "epochs": epochs,
-                    "lr": lr,
-                    "weight_decay": weight_decay,
-                    "grad_clip": grad_clip,
-                    "batch_size": batch_size,
-                    "chunk_size": chunk_size,
-                    "device": device,
-                    "max_steps_per_epoch": max_steps_per_epoch,
-                    "total_steps": total_steps,
-                    "global_step": global_step,
-                },
-            },
-            save_path,
+        save_checkpoint(
+            Path(save_path),
+            model,
+            optimizer,
+            epochs,
+            lr,
+            weight_decay,
+            grad_clip,
+            batch_size,
+            chunk_size,
+            device,
+            max_steps_per_epoch,
+            total_steps,
+            global_step,
         )
-        print(f"Saved model to {save_path}")
+        print(f"Saved model to {save_path}", flush=True)
 
     return model
+
+
+def save_checkpoint(
+    save_path: Path,
+    model: ACT,
+    optimizer: torch.optim.Optimizer,
+    epochs: int,
+    lr: float,
+    weight_decay: float,
+    grad_clip: float | None,
+    batch_size: int,
+    chunk_size: int,
+    device: str,
+    max_steps_per_epoch: int | None,
+    total_steps: int | None,
+    global_step: int,
+):
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    torch.save(
+        {
+            "model_state_dict": to_cpu(model.state_dict()),
+            "optimizer_state_dict": to_cpu(optimizer.state_dict()),
+            "model_config": {
+                "num_cams": model.num_cams,
+                "cam_width": model.cam_width,
+                "cam_height": model.cam_height,
+                "state_dim": model.state_dim,
+                "hidden_size": model.hidden_size,
+                "latent_dim": model.latent_dim,
+                "chunk_size": model.chunk_size,
+                "beta": model.beta,
+                "batch_size": model.batch_size,
+                "nhead": model.nhead,
+                "dim_feedforward": model.dim_feedforward,
+                "dropout": model.dropout,
+                "obs_encoder_layers": model.obs_encoder_layers,
+                "vae_encoder_layers": model.vae_encoder_layers,
+                "vae_decoder_layers": model.vae_decoder_layers,
+            },
+            "train_config": {
+                "epochs": epochs,
+                "lr": lr,
+                "weight_decay": weight_decay,
+                "grad_clip": grad_clip,
+                "batch_size": batch_size,
+                "chunk_size": chunk_size,
+                "device": device,
+                "max_steps_per_epoch": max_steps_per_epoch,
+                "total_steps": total_steps,
+                "global_step": global_step,
+            },
+        },
+        save_path,
+    )
 
 if __name__ == "__main__":
 
@@ -317,6 +390,8 @@ if __name__ == "__main__":
         chunk_size=chunk_size,
         device=get_device(),
         save_path="outputs/act_so101_pickup_env_30_clean.pt",
+        log_every=10,
+        save_every=5000,
     )
     
 
