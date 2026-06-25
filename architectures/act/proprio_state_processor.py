@@ -13,7 +13,7 @@ class StateProcessor(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """ x: (B, state_dim) """
-        return self.projection(x)
+        return self.projection(x).unsqueeze(1)
 
 if __name__ == "__main__":
     processor = StateProcessor(256, 6)

@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 
+from architectures.act.pos_encodings import positionalencoding2d
+
 class CameraProcessor(nn.Module):
     
-    def __init__(self, hidden_size: int = 256):
+    def __init__(self, hidden_size: int = 512):
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -19,17 +21,26 @@ class CameraProcessor(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """ x: (B, num_cams, C, H, W) """
+        B, num_cams, _, _, _ = x.shape
         total = []
-        for b in range(x.shape[0]):
+        for b in range(B):
             feat = self.resnet_feature_extractor(x[b])
             feat_down = self.channel_reduction(feat)
+            _, _, h, w = feat_down.shape
 
-            total.append(feat_down.reshape(-1, self.hidden_size))
+            tokens = feat_down.permute(0, 2, 3, 1).reshape(-1, self.hidden_size)
+
+            pos_enc = positionalencoding2d(self.hidden_size, h, w)
+            pos_enc = pos_enc.to(device=x.device, dtype=x.dtype)
+            pos_enc = pos_enc.permute(1, 2, 0).reshape(-1, self.hidden_size)
+            pos_enc = pos_enc.repeat(num_cams, 1)
+
+            total.append(tokens + pos_enc)
 
         return torch.stack(total, dim=0)
 
 if __name__ == "__main__":
-    processor = CameraProcessor(hidden_size=256)
+    processor = CameraProcessor(hidden_size=512)
 
     print(processor(torch.zeros((4, 3, 3, 640, 480))).shape)
 
