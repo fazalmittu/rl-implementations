@@ -1,0 +1,36 @@
+import torch
+import torch.nn as nn
+from torchvision.models import resnet18, ResNet18_Weights
+
+class CameraProcessor(nn.Module):
+    
+    def __init__(self, hidden_size: int = 256):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+
+        self.RESNET_HIDDEN_SIZE = 512  # num channels of layer of ResNet we use
+
+        # need to get hidden representations, we go 2 layers deep backwards since 1 layer deep reduces spatial dims to 1x1
+        self.resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
+        self.resnet_feature_extractor = nn.Sequential(*list(self.resnet.children())[:-2])
+
+        self.channel_reduction = nn.Conv2d(self.RESNET_HIDDEN_SIZE, self.hidden_size, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """ x: (B, num_cams, C, H, W) """
+        total = []
+        for b in range(x.shape[0]):
+            feat = self.resnet_feature_extractor(x[b])
+            feat_down = self.channel_reduction(feat)
+
+            total.append(feat_down.reshape(-1, self.hidden_size))
+
+        return torch.stack(total, dim=0)
+
+if __name__ == "__main__":
+    processor = CameraProcessor(hidden_size=256)
+
+    print(processor(torch.zeros((4, 3, 3, 640, 480))).shape)
+
+# python3 -m architectures.act.img_processor
