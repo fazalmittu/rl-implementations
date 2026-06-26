@@ -179,6 +179,7 @@ def make_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         drop_last=True,
+        persistent_workers=num_workers > 0,
     )
 
 

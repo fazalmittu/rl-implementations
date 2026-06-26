@@ -66,6 +66,15 @@ def make_action_dict(action: torch.Tensor, action_names: list[str]) -> dict[str,
     return {name: float(value) for name, value in zip(action_names, action.cpu().tolist())}
 
 
+def short_name(name: str) -> str:
+    return name.removesuffix(".pos")
+
+
+def format_joint_values(values: torch.Tensor, action_names: list[str]) -> dict[str, float]:
+    vals = values.detach().cpu().numpy().round(2).tolist()
+    return {short_name(name): val for name, val in zip(action_names, vals)}
+
+
 def load_model(checkpoint_path: str, device: str) -> ACT:
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
@@ -138,6 +147,30 @@ def run_episode(args):
 
             action_chunk_norm = model.predict_action_chunk(image, state_norm)
             action_chunk = unnormalize_action(action_chunk_norm.squeeze(0), stats, device)
+            current_state = state.squeeze(0)
+
+            if args.diagnose_only:
+                first_action = action_chunk[0]
+                first_delta = first_action - current_state
+                print("current_state", format_joint_values(current_state, action_names))
+                print("first_target", format_joint_values(first_action, action_names))
+                print("first_delta", format_joint_values(first_delta, action_names))
+                print(
+                    "chunk_min",
+                    format_joint_values(action_chunk.min(dim=0).values, action_names),
+                )
+                print(
+                    "chunk_max",
+                    format_joint_values(action_chunk.max(dim=0).values, action_names),
+                )
+                print(
+                    "clamp_risk",
+                    {
+                        short_name(name): abs(float(delta)) > args.max_relative_target
+                        for name, delta in zip(action_names, first_delta.detach().cpu().tolist())
+                    },
+                )
+                break
 
             if args.print_actions:
                 print(
@@ -156,7 +189,15 @@ def run_episode(args):
                 if args.dry_run:
                     print(action_dict)
                 else:
-                    robot.send_action(action_dict)
+                    sent_action = robot.send_action(action_dict)
+
+                    if args.log_sent_every > 0 and actions_sent % args.log_sent_every == 0:
+                        sent = torch.tensor(
+                            [sent_action[name] for name in action_names],
+                            dtype=torch.float32,
+                            device=device,
+                        )
+                        print("sent_target", format_joint_values(sent, action_names))
 
                 actions_sent += 1
                 next_tick += 1.0 / args.fps
@@ -192,7 +233,9 @@ def parse_args():
     parser.add_argument("--max-relative-target", type=float, default=5.0)
     parser.add_argument("--device", default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--diagnose-only", action="store_true")
     parser.add_argument("--print-actions", action="store_true")
+    parser.add_argument("--log-sent-every", type=int, default=0)
     parser.add_argument("--yes", action="store_true")
     return parser.parse_args()
 

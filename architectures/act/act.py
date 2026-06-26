@@ -175,6 +175,7 @@ def train(
     save_path: str | None = None,
     log_every: int = 10,
     save_every: int | None = None,
+    num_workers: int = 0,
 ):
 
     if model is None:
@@ -190,7 +191,15 @@ def train(
             batch_size=batch_size,
         )
 
-    loader = make_dataloader(batch_size=batch_size, chunk_size=chunk_size)
+    loader = make_dataloader(
+        batch_size=batch_size,
+        chunk_size=chunk_size,
+        num_workers=num_workers,
+    )
+    print(
+        f"Training data: {len(loader.dataset)} samples | {len(loader)} steps/epoch | batch_size={batch_size}",
+        flush=True,
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = model.loss
@@ -266,6 +275,7 @@ def train(
                     max_steps_per_epoch,
                     total_steps,
                     global_step,
+                    num_workers,
                 )
                 print(f"Saved checkpoint to {checkpoint_path}", flush=True)
 
@@ -295,6 +305,7 @@ def train(
             max_steps_per_epoch,
             total_steps,
             global_step,
+            num_workers,
         )
         print(f"Saved model to {save_path}", flush=True)
 
@@ -315,6 +326,7 @@ def save_checkpoint(
     max_steps_per_epoch: int | None,
     total_steps: int | None,
     global_step: int,
+    num_workers: int = 0,
 ):
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -350,6 +362,7 @@ def save_checkpoint(
                 "max_steps_per_epoch": max_steps_per_epoch,
                 "total_steps": total_steps,
                 "global_step": global_step,
+                "num_workers": num_workers,
             },
         },
         save_path,
@@ -392,6 +405,7 @@ if __name__ == "__main__":
         save_path="outputs/act_so101_pickup_env_30_clean.pt",
         log_every=10,
         save_every=5000,
+        num_workers=2,
     )
     
 

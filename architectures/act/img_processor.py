@@ -21,23 +21,21 @@ class CameraProcessor(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """ x: (B, num_cams, C, H, W) """
-        B, num_cams, _, _, _ = x.shape
-        total = []
-        for b in range(B):
-            feat = self.resnet_feature_extractor(x[b])
-            feat_down = self.channel_reduction(feat)
-            _, _, h, w = feat_down.shape
+        B, num_cams, C, H, W = x.shape
 
-            tokens = feat_down.permute(0, 2, 3, 1).reshape(-1, self.hidden_size)
+        x = x.reshape(B * num_cams, C, H, W)
+        feat = self.resnet_feature_extractor(x)
+        feat_down = self.channel_reduction(feat)
+        _, _, h, w = feat_down.shape
 
-            pos_enc = positionalencoding2d(self.hidden_size, h, w)
-            pos_enc = pos_enc.to(device=x.device, dtype=x.dtype)
-            pos_enc = pos_enc.permute(1, 2, 0).reshape(-1, self.hidden_size)
-            pos_enc = pos_enc.repeat(num_cams, 1)
+        tokens = feat_down.permute(0, 2, 3, 1).reshape(B, num_cams * h * w, self.hidden_size)
 
-            total.append(tokens + pos_enc)
+        pos_enc = positionalencoding2d(self.hidden_size, h, w)
+        pos_enc = pos_enc.to(device=x.device, dtype=x.dtype)
+        pos_enc = pos_enc.permute(1, 2, 0).reshape(-1, self.hidden_size)
+        pos_enc = pos_enc.repeat(num_cams, 1).unsqueeze(0)
 
-        return torch.stack(total, dim=0)
+        return tokens + pos_enc
 
 if __name__ == "__main__":
     processor = CameraProcessor(hidden_size=512)
