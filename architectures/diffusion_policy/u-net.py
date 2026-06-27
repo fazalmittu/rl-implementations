@@ -43,43 +43,43 @@ class UNet(nn.Module):
         self.max_pool_l3 = nn.MaxPool1d(2)
 
         self.bottleneck = nn.Sequential(
-            nn.Conv1d(1024, 1024, 3, 1, 1),
+            nn.Conv1d(1024, 2048, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(1024, 1024, 3, 1, 1),
+            nn.Conv1d(2048, 2048, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(1024, 1024, 3, 1, 1),
+            nn.Conv1d(2048, 2048, 3, 1, 1),
         )
 
-        self.conv_transpose_l3 = nn.ConvTranspose1d(1024, 512, 4, 2, 1)
+        self.conv_transpose_l3 = nn.ConvTranspose1d(2048, 1024, 4, 2, 1)
         
         self.decoder_l3 = nn.Sequential(
-            nn.Conv1d(512, 512, 3, 1, 1),
+            nn.Conv1d(2048, 1024, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(512, 512, 3, 1, 1),
+            nn.Conv1d(1024, 1024, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(512, 512, 3, 1, 1),
+            nn.Conv1d(1024, 1024, 3, 1, 1),
         )
 
-        self.conv_transpose_l2 = nn.ConvTranspose1d(512, 256, 4, 2, 1)
+        self.conv_transpose_l2 = nn.ConvTranspose1d(1024, 512, 4, 2, 1)
 
         self.decoder_l2 = nn.Sequential(
-            nn.Conv1d(256, 256, 3, 1, 1),
+            nn.Conv1d(1024, 512, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(256, 256, 3, 1, 1),
+            nn.Conv1d(512, 512, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(256, 256, 3, 1, 1),
+            nn.Conv1d(512, 512, 3, 1, 1),
         )
 
-        self.conv_transpose_l1 = nn.ConvTranspose1d(256, 128, 4, 2, 1)
+        self.conv_transpose_l1 = nn.ConvTranspose1d(512, 256, 4, 2, 1)
 
         self.decoder_l1 = nn.Sequential(
-            nn.Conv1d(128, 128, 3, 1, 1),
+            nn.Conv1d(512, 256, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(128, 128, 3, 1, 1),
+            nn.Conv1d(256, 256, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv1d(128, 128, 3, 1, 1),
+            nn.Conv1d(256, 256, 3, 1, 1),
+            nn.Conv1d(256, 128, 1)
         )
-
 
 
     def forward(self, actions: torch.Tensor, obs_emb: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -91,7 +91,7 @@ class UNet(nn.Module):
 
         action_embs = self.action_proj(actions)
         action_embs = action_embs.permute(0, 2, 1)   # torch.conv1d expects (N, C, L)
-        # print(action_embs.shape)
+        print(action_embs.shape)
 
         encoder_l1_out = self.encoder_l1(action_embs)
         # print(encoder_l1_out.shape)
@@ -106,7 +106,7 @@ class UNet(nn.Module):
         # print(encoder_l3_in.shape)
 
         encoder_l3_out = self.encoder_l3(encoder_l3_in)
-        # print(encoder_l2_out.shape)
+        # print(encoder_l3_out.shape)
 
         bottleneck_in = self.max_pool_l3(encoder_l3_out)
         # print(bottleneck_in.shape)
@@ -117,20 +117,20 @@ class UNet(nn.Module):
         decoder_l3_in = self.conv_transpose_l3(bottleneck_out)
         # print(decoder_l3_in.shape)
 
-        decoder_l3_out = self.decoder_l3(decoder_l3_in) + encoder_l3_out
+        decoder_l3_out = self.decoder_l3(torch.cat((encoder_l3_out, decoder_l3_in), dim=1))
         # print(decoder_l3_out.shape)
         
         decoder_l2_in = self.conv_transpose_l2(decoder_l3_out)
         # print(decoder_l2_in.shape)
 
-        decoder_l2_out = self.decoder_l2(decoder_l2_in) + encoder_l2_out
+        decoder_l2_out = self.decoder_l2(torch.cat((encoder_l2_out, decoder_l2_in), dim=1)) 
         # print(decoder_l2_out.shape)
 
         decoder_l1_in = self.conv_transpose_l1(decoder_l2_out)
         # print(decoder_l1_in.shape)
 
-        decoder_l1_out = self.decoder_l1(decoder_l1_in) + encoder_l1_out
-        # print(decoder_l1_out.shape)
+        decoder_l1_out = self.decoder_l1(torch.cat((encoder_l1_out, decoder_l1_in), dim=1))
+        print(decoder_l1_out.shape)
 
 
 if __name__ == "__main__":
