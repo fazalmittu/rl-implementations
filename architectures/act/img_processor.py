@@ -25,6 +25,8 @@ class CameraProcessor(nn.Module):
 
         x = x.reshape(B * num_cams, C, H, W)
         feat = self.resnet_feature_extractor(x)
+        print(feat.shape)
+        
         feat_down = self.channel_reduction(feat)
         _, _, h, w = feat_down.shape
 
