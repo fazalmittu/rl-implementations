@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from architectures.act.pos_encodings import positionalencoding1d
+from architectures.utils.pos_encodings import positionalencoding1d
 
 class VAE(nn.Module):
 

@@ -1,6 +1,8 @@
 """
 
-code used from here: https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py
+code for positionalencoding1d() / positionalencoding2d()
+
+used from here: https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py
 
 """
 
@@ -48,3 +50,26 @@ def positionalencoding2d(d_model, height, width):
     pe[d_model + 1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, width)
 
     return pe
+
+def ddpm_timestep_embedding(timesteps: torch.Tensor, dim: int) -> torch.Tensor:
+    """
+    timesteps: (B) or (B, 1)
+    returns:   (B, dim)
+    """
+    if timesteps.dim() == 2:
+        timesteps = timesteps.squeeze(-1)
+
+    half_dim = dim // 2
+
+    freqs = torch.exp(
+        -math.log(10000) * torch.arange(half_dim, device=timesteps.device).float() / (half_dim - 1)
+    )
+
+    args = timesteps.float()[:, None] * freqs[None, :]
+
+    emb = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+
+    if dim % 2 == 1:
+        emb = torch.nn.functional.pad(emb, (0, 1))
+
+    return emb

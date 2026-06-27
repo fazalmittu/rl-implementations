@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18, ResNet18_Weights
 
-from architectures.act.pos_encodings import positionalencoding2d
+from architectures.utils.pos_encodings import positionalencoding2d
 
 class CameraProcessor(nn.Module):
     
