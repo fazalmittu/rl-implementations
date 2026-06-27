@@ -53,10 +53,7 @@ class ObsEncoder(nn.Module):
 
         final = torch.cat((img_embeddings, state_embeddings), dim=1)
 
-        final_mean = final.mean(dim=1)
-        print(final_mean.shape)
-
-        return final  # (B, hidden_size)
+        return final  # (B, num_tokens, hidden_size)
 
 
 if __name__ == "__main__":
