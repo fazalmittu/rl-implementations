@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from architectures.diffusion_policy.obs_encoder import ObsEncoder
+from architectures.diffusion_policy.timestep_encoder import TimeStepEncoder
 
 class DiffusionPolicy(nn.Module):
 
@@ -28,7 +29,10 @@ class DiffusionPolicy(nn.Module):
         self.batch_size = batch_size
 
         self.obs_encoder = ObsEncoder(hidden_size=self.hidden_size, state_dim=self.state_dim)
+        self.timestep_encoder = TimeStepEncoder(hidden_size=self.hidden_size)
 
+    def forward(self, obs_embs: torch.Tensor, time_embs: torch.Tensor, noisy_actions: torch.Tensor) -> torch.Tensor:
+        return
 
 
 

@@ -5,11 +5,10 @@ from architectures.utils.pos_encodings import ddpm_timestep_embedding
 
 class TimeStepEncoder(nn.Module):
 
-    def __init__(self, hidden_size: int = 128, batch_size: int = 4):
+    def __init__(self, hidden_size: int = 128):
         super().__init__()
 
         self.hidden_size = hidden_size
-        self.batch_size = batch_size
 
         self.mlp = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size * 4),
@@ -19,7 +18,7 @@ class TimeStepEncoder(nn.Module):
 
     def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
         """
-        timesteps: (B, 1) -- will always be values between 0 - diffusion_timesteps
+        timesteps: (B) -- will always be values in (0, diffusion_timesteps)
         """
 
         sin_embs = ddpm_timestep_embedding(timesteps, self.hidden_size)
