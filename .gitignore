@@ -4,3 +4,7 @@ __pycache__/
 *.png
 outputs/
 scripts/
+data/
+datasets/
+*.hdf5
+*.h5
