@@ -87,6 +87,8 @@ class FlowPolicy(nn.Module):
         obs:           (B, obs_dim)
         noisy_actions: (B, action_horizon, action_dim)
         t:             (B,) in [0, 1]
+
+        returns: (B, action_horizon, action_dim)
         """
         if t.dim() == 0:
             t = t.expand(obs.shape[0])
@@ -109,14 +111,29 @@ class FlowPolicy(nn.Module):
 
         return F.mse_loss(pred_velocity, target_velocity, reduction="mean")
 
-    @torch.no_grad()
+    @staticmethod
+    def gaussian_log_prob(value: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+        var = std.pow(2)
+        log_prob = -0.5 * (
+            (value - mean).pow(2) / var
+            + 2.0 * torch.log(std)
+            + math.log(2.0 * math.pi)
+        )
+        return log_prob.flatten(start_dim=1).sum(dim=1)
+
     def sample(
         self,
         obs: torch.Tensor,
         num_steps: int = 10,
         return_chain: bool = True,
         noise: torch.Tensor | None = None,
+        noise_std: float = 0.0,
+        return_log_probs: bool = False,
+        chain: torch.Tensor | None = None,
     ):
+        if return_log_probs and noise_std <= 0.0:
+            raise ValueError("noise_std must be positive when return_log_probs=True")
+
         was_training = self.training
         self.eval()
 
@@ -126,7 +143,13 @@ class FlowPolicy(nn.Module):
             obs = obs.to(device=device, dtype=dtype)
             batch_size = obs.shape[0]
 
-            if noise is None:
+            replay_chain = chain
+            if replay_chain is not None:
+                replay_chain = replay_chain.to(device=device, dtype=dtype).detach()
+                if replay_chain.shape[1] != num_steps + 1:
+                    raise ValueError(f"chain must have {num_steps + 1} states")
+                x = replay_chain[:, 0]
+            elif noise is None:
                 x = torch.randn(
                     batch_size,
                     self.action_horizon,
@@ -137,18 +160,51 @@ class FlowPolicy(nn.Module):
             else:
                 x = noise.to(device=device, dtype=dtype)
 
-            chain = [x] if return_chain else None
+            chain_out = [x] if return_chain and replay_chain is None else None
+            log_probs = [] if return_log_probs else None
             dt = 1.0 / float(num_steps)
+            std = torch.as_tensor(noise_std, device=device, dtype=dtype)
 
             for step in range(num_steps):
                 t = torch.full((batch_size,), step * dt, device=device, dtype=dtype)
-                x = x + dt * self(obs, x, t)
-                if chain is not None:
-                    chain.append(x)
+                x_prev = replay_chain[:, step] if replay_chain is not None else x
+                mean = x_prev + dt * self(obs, x_prev, t)
 
+                if replay_chain is not None:
+                    x = replay_chain[:, step + 1]
+                    if log_probs is not None:
+                        log_probs.append(self.gaussian_log_prob(x, mean, std))
+                elif noise_std > 0.0:
+                    x_next = mean.detach() + std * torch.randn_like(mean)
+                    if log_probs is not None:
+                        log_probs.append(self.gaussian_log_prob(x_next, mean, std))
+                    x = x_next.detach()
+                else:
+                    x = mean
+
+                if chain_out is not None:
+                    chain_out.append(x)
+
+            if return_log_probs:
+                log_probs = torch.stack(log_probs, dim=1)
+                if return_chain:
+                    chain_tensor = replay_chain if replay_chain is not None else torch.stack(chain_out, dim=1)
+                    return x, chain_tensor, log_probs
+                return x, log_probs
             if return_chain:
-                return x, torch.stack(chain, dim=1)
+                return x, replay_chain if replay_chain is not None else torch.stack(chain_out, dim=1)
             return x
         finally:
             if was_training:
                 self.train()
+
+if __name__ == "__main__":
+
+    flow = FlowPolicy(
+        10, 6, 4
+    )
+
+    # print(flow(torch.randn((4, 10)), torch.randn((4, 4, 6)), torch.randn((4))).shape)
+    flow.sample(torch.randn((4, 10)))
+
+# python3 -m architectures.flow_policy.flow_policy
