@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.png
 outputs/
+wandb/
 scripts/
 data/
 datasets/

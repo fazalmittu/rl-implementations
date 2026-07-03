@@ -1,5 +1,13 @@
 torch
+torchvision
 gymnasium
 numpy
 matplotlib
 h5py
+wandb
+imageio
+opencv-python
+pandas
+mujoco
+robomimic
+robosuite

@@ -2,6 +2,7 @@ import argparse
 import copy
 from collections import deque
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -135,7 +136,7 @@ class OGPO(nn.Module):
                 return_chain=True,
                 noise_std=self.flow_noise_std,
                 return_log_probs=True,
-            ) # sample actor_samples chains per obs and freeze their old log probs
+            ) # sample actor_samples chains per obs and freeze their old log probs (bc torch.no_grad())
 
         # sampled_actions: (B * actor_samples, action_horizon, action_dim)
         # chain:           (B * actor_samples, sample_steps + 1, action_horizon, action_dim)
@@ -358,6 +359,29 @@ def save_checkpoint(
     )
 
 
+def init_wandb(args: argparse.Namespace, checkpoint: dict, agent: OGPO, device: str):
+    if not args.wandb:
+        return None
+
+    import wandb
+
+    return wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_name,
+        config={
+            **vars(args),
+            "device": device,
+            "obs_dim": agent.obs_dim,
+            "action_dim": agent.action_dim,
+            "action_horizon": agent.action_horizon,
+            "flat_action_dim": agent.flat_action_dim,
+            "policy_model_config": checkpoint["model_config"],
+            "policy_train_config": checkpoint.get("train_config", {}),
+        },
+    )
+
+
 def train(args: argparse.Namespace):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -376,6 +400,7 @@ def train(args: argparse.Namespace):
         device=device,
     )
     env = make_env(args.dataset, record_video=False)
+    wandb_run = init_wandb(args, checkpoint, agent, device)
 
     print(
         f"OGPO: start_transitions={args.start_transitions}"
@@ -389,6 +414,7 @@ def train(args: argparse.Namespace):
     next_log = args.log_every
     next_save = args.save_every
     recent_successes = deque(maxlen=20)
+    start_t = time.perf_counter()
 
     try:
         seed_stats = seed_replay(env, buffer, agent, obs_keys, checkpoint, args, device)
@@ -399,6 +425,16 @@ def train(args: argparse.Namespace):
             f" | mean_return={seed_stats['mean_return']:.3f}",
             flush=True,
         )
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "seed/episodes": seed_stats["episodes"],
+                    "seed/success_rate": seed_stats["success_rate"],
+                    "seed/mean_return": seed_stats["mean_return"],
+                    "replay/size": len(buffer),
+                },
+                step=0,
+            )
 
         obs = env.reset()
         episode_steps = 0
@@ -441,6 +477,18 @@ def train(args: argparse.Namespace):
                     f"{metrics}",
                     flush=True,
                 )
+                if wandb_run is not None:
+                    wandb_log = {
+                        "train/env_steps": env_steps,
+                        "train/chunks": chunks,
+                        "train/elapsed_s": time.perf_counter() - start_t,
+                        "rollout/recent_success": recent_success,
+                        "rollout/chunk_reward": transition["raw_reward"],
+                        "rollout/chunk_steps": transition["steps"],
+                        "replay/size": len(buffer),
+                    }
+                    wandb_log.update({f"update/{key}": value for key, value in last_metrics.items()})
+                    wandb_run.log(wandb_log, step=env_steps)
                 while env_steps >= next_log:
                     next_log += args.log_every
 
@@ -458,6 +506,8 @@ def train(args: argparse.Namespace):
         print(f"saved final checkpoint to {args.output}", flush=True)
     finally:
         env.close()
+        if wandb_run is not None:
+            wandb_run.finish()
 
     return agent
 
@@ -491,6 +541,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--log-every", type=int, default=1000)
     parser.add_argument("--save-every", type=int, default=10_000)
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", default="robomimic-flow-policy")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-name", default=None)
     parser.add_argument("--ignore-done", action="store_true")
     parser.add_argument("--no-clip-actions", dest="clip_actions", action="store_false")
     parser.set_defaults(clip_actions=True)
@@ -498,27 +552,6 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    # train(parse_args())
-    
-    # want to observe update function
-    agent = OGPO(
-        obs_dim=10,
-        action_dim=10,
-        action_horizon=4,
-        hidden_size=256,
-        num_layers=4,
-        time_embed_dim=64,
-    )
-
-    buffer = ReplayBuffer(agent.obs_dim, agent.flat_action_dim, capacity=100, device="cpu")
-    transition = {
-        "obs": torch.randn(10),
-        "action": torch.randn(agent.flat_action_dim),
-        "reward": torch.randn(1),
-        "next_obs": torch.randn(10),
-        "done": False,
-    }
-    buffer.add(transition["obs"], transition["action"], transition["reward"], transition["next_obs"], transition["done"])
-    agent.update(buffer)
+    train(parse_args())
 
 # python3 -m architectures.flow_policy.ogpo
