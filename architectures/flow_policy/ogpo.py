@@ -42,6 +42,7 @@ class OGPO(nn.Module):
         discount_steps: int | None = None,
         actor_samples: int = 4,
         flow_noise_std: float = 0.1,
+        debias_flow_noise: bool = True,
         ppo_clip: float = 0.2,
         actor_update_epochs: int = 2,
     ):
@@ -60,6 +61,7 @@ class OGPO(nn.Module):
         self.sample_steps = sample_steps
         self.actor_samples = actor_samples
         self.flow_noise_std = flow_noise_std
+        self.debias_flow_noise = debias_flow_noise
         self.ppo_clip = ppo_clip
         self.actor_update_epochs = actor_update_epochs
 
@@ -92,11 +94,13 @@ class OGPO(nn.Module):
         )
 
     @torch.no_grad()
-    def act(self, obs: torch.Tensor) -> torch.Tensor:
+    def act(self, obs: torch.Tensor, stochastic: bool = False) -> torch.Tensor:
         return self.actor.sample(
             obs,
             num_steps=self.sample_steps,
             return_chain=False,
+            noise_std=self.flow_noise_std if stochastic else 0.0,
+            debias_noise=self.debias_flow_noise,
         )
 
     def update(self, buffer: ReplayBuffer) -> dict[str, float]:
@@ -136,6 +140,7 @@ class OGPO(nn.Module):
                 return_chain=True,
                 noise_std=self.flow_noise_std,
                 return_log_probs=True,
+                debias_noise=self.debias_flow_noise,
             ) # sample actor_samples chains per obs and freeze their old log probs (bc torch.no_grad())
 
         # sampled_actions: (B * actor_samples, action_horizon, action_dim)
@@ -168,6 +173,7 @@ class OGPO(nn.Module):
                 noise_std=self.flow_noise_std,
                 return_log_probs=True,
                 chain=chain,
+                debias_noise=self.debias_flow_noise,
             ) 
             log_prob = log_probs.sum(dim=1)
 
@@ -220,6 +226,7 @@ def load_agent(args: argparse.Namespace, device: str):
         discount_steps=args.execute_horizon,
         actor_samples=args.actor_samples,
         flow_noise_std=args.flow_noise_std,
+        debias_flow_noise=args.debias_flow_noise,
         ppo_clip=args.ppo_clip,
         actor_update_epochs=args.actor_update_epochs,
     ).to(device)
@@ -240,7 +247,7 @@ def collect_chunk(
     device: str,
 ) -> dict:
     obs_tensor = obs_to_tensor(obs, obs_keys, checkpoint, device)
-    action_norm = agent.act(obs_tensor)[0]
+    action_norm = agent.act(obs_tensor, stochastic=args.stochastic_rollout)[0]
     action_env = unnormalize_action(action_norm, checkpoint).detach().cpu().numpy()
     if args.clip_actions:
         action_env = np.clip(action_env, -1.0, 1.0)
@@ -535,6 +542,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-min", type=int, default=2)
     parser.add_argument("--actor-samples", type=int, default=4)
     parser.add_argument("--flow-noise-std", type=float, default=0.1)
+    parser.add_argument("--no-debias-flow-noise", dest="debias_flow_noise", action="store_false")
+    parser.add_argument("--deterministic-rollout", dest="stochastic_rollout", action="store_false")
     parser.add_argument("--ppo-clip", type=float, default=0.2)
     parser.add_argument("--actor-update-epochs", type=int, default=2)
     parser.add_argument("--device", default="auto")
@@ -547,7 +556,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-name", default=None)
     parser.add_argument("--ignore-done", action="store_true")
     parser.add_argument("--no-clip-actions", dest="clip_actions", action="store_false")
-    parser.set_defaults(clip_actions=True)
+    parser.set_defaults(
+        clip_actions=True,
+        debias_flow_noise=True,
+        stochastic_rollout=True,
+    )
     return parser.parse_args()
 
 

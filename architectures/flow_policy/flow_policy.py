@@ -130,6 +130,7 @@ class FlowPolicy(nn.Module):
         noise_std: float = 0.0,
         return_log_probs: bool = False,
         chain: torch.Tensor | None = None,
+        debias_noise: bool = False,
     ):
         if return_log_probs and noise_std <= 0.0:
             raise ValueError("noise_std must be positive when return_log_probs=True")
@@ -168,16 +169,23 @@ class FlowPolicy(nn.Module):
             for step in range(num_steps):
                 t = torch.full((batch_size,), step * dt, device=device, dtype=dtype)
                 x_prev = replay_chain[:, step] if replay_chain is not None else x
-                mean = x_prev + dt * self(obs, x_prev, t)
+                velocity = self(obs, x_prev, t)
+                step_std = std
+                if noise_std > 0.0 and debias_noise:
+                    t_view = t.view(-1, 1, 1)
+                    step_std = std * torch.sqrt((1.0 - t_view).clamp_min(0.0))
+                    correction = 0.5 * std.pow(2) * (t_view * velocity - x_prev)
+                    velocity = velocity + correction
+                mean = x_prev + dt * velocity
 
                 if replay_chain is not None:
                     x = replay_chain[:, step + 1]
                     if log_probs is not None:
-                        log_probs.append(self.gaussian_log_prob(x, mean, std))
+                        log_probs.append(self.gaussian_log_prob(x, mean, step_std))
                 elif noise_std > 0.0:
-                    x_next = mean.detach() + std * torch.randn_like(mean)
+                    x_next = mean.detach() + step_std * torch.randn_like(mean)
                     if log_probs is not None:
-                        log_probs.append(self.gaussian_log_prob(x_next, mean, std))
+                        log_probs.append(self.gaussian_log_prob(x_next, mean, step_std))
                     x = x_next.detach()
                 else:
                     x = mean
