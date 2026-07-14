@@ -93,6 +93,81 @@ def render_frame(env, args: argparse.Namespace) -> np.ndarray:
 
 
 @torch.inference_mode()
+def eval_action_fn(
+    action_fn,
+    checkpoint: dict,
+    dataset_path: str | Path,
+    device: str,
+    episodes: int = 30,
+    horizon: int = 400,
+    execute_horizon: int | None = None,
+    clip_actions: bool = True,
+    ignore_done: bool = False,
+    print_episodes: bool = False,
+    seed: int | None = None,
+) -> dict[str, float]:
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+    obs_keys = tuple(checkpoint["dataset"]["obs_keys"])
+    action_horizon = checkpoint["model_config"]["action_horizon"]
+    execute_horizon = execute_horizon or action_horizon
+    if execute_horizon <= 0 or execute_horizon > action_horizon:
+        raise ValueError(f"execute_horizon must be in [1, {action_horizon}]")
+
+    env = make_env(dataset_path, record_video=False)
+    successes = []
+    lengths = []
+    returns = []
+
+    try:
+        for episode in range(episodes):
+            obs = env.reset()
+            total_reward = 0.0
+            success = False
+            steps = 0
+
+            while steps < horizon:
+                obs_tensor = obs_to_tensor(obs, obs_keys, checkpoint, device)
+                action_chunk_norm = action_fn(obs_tensor)
+                action_chunk = unnormalize_action(action_chunk_norm, checkpoint).detach().cpu().numpy()
+                if clip_actions:
+                    action_chunk = np.clip(action_chunk, -1.0, 1.0)
+
+                for action in action_chunk[:execute_horizon]:
+                    obs, reward, done, _ = env.step(action)
+                    total_reward += float(reward)
+                    steps += 1
+                    success = is_success(env)
+                    if success or (done and not ignore_done) or steps >= horizon:
+                        break
+
+                if success or (done and not ignore_done):
+                    break
+
+            successes.append(float(success))
+            lengths.append(steps)
+            returns.append(total_reward)
+            if print_episodes:
+                print(
+                    f"eval episode {episode + 1}/{episodes}"
+                    f" | success={int(success)}"
+                    f" | steps={steps}"
+                    f" | return={total_reward:.3f}",
+                    flush=True,
+                )
+    finally:
+        env.close()
+
+    return {
+        "success_rate": float(np.mean(successes)) if successes else 0.0,
+        "mean_length": float(np.mean(lengths)) if lengths else 0.0,
+        "mean_return": float(np.mean(returns)) if returns else 0.0,
+    }
+
+
+@torch.inference_mode()
 def rollout(args: argparse.Namespace):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

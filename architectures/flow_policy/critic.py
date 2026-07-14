@@ -30,6 +30,21 @@ class REDQCritic(nn.Module):
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         return torch.stack([q(obs, action) for q in self.qs], dim=0)
 
+    def aggregate(
+        self,
+        obs: torch.Tensor,
+        action: torch.Tensor,
+        method: str = "mean",
+        num_min: int = 2,
+    ) -> torch.Tensor:
+        if method == "mean":
+            return self(obs, action).mean(dim=0)
+        if method == "min":
+            return self(obs, action).min(dim=0).values
+        if method == "subsample":
+            return self.min(obs, action, num_min)
+        raise ValueError(f"unknown q aggregation: {method}")
+
     def min(self, obs: torch.Tensor, action: torch.Tensor, num_min: int = 2) -> torch.Tensor:
         if num_min >= self.num_qs:
             values = self(obs, action)
